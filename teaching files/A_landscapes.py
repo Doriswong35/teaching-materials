@@ -6,7 +6,7 @@ DEM=np.genfromtxt('wark_data/dem.asc',  dtype=float, autostrip=True)
 slope=np.genfromtxt('wark_data/slope.asc',  dtype=float, autostrip=True)
 hand=np.genfromtxt('wark_data/HAND.asc',  dtype=float, autostrip=True)
 basin=np.genfromtxt('wark_data/basin.asc',  dtype=float, autostrip=True)
-
+###
 #plot DEM
 plt.figure(1)
 DEM[DEM==-9999]=np.nan
