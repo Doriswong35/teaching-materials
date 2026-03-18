@@ -96,52 +96,50 @@ class HBV_Bmi(Bmi):
                 self.P_dt  = self.P.isel(time=self.current_timestep).to_numpy() * self.dt
                 self.Ep_dt = self.EP.isel(time=self.current_timestep).to_numpy() * self.dt
 
-
-                
                 # Interception Reservoir
                 if self.P_dt > 0:
                     # if there is rain, no evap
                     self.Si    = self.Si + self.P_dt               # increase the storage
-                    self.Pe_dt = 0 # adjust if needed
-                    self.Si    = 0 # adjust if needed
-                    self.Ei_dt = 0 # adjust if needed                         
+                    self.Pe_dt = np.maximum((self.Si - self.I_max), 0)
+                    self.Si    = self.Si - self.Pe_dt
+                    self.Ei_dt = 0                       
                 else:
                     # Evaporation only when there is no rainfall
                     self.Pe_dt = 0 # adjust if needed
-                    self.Ei_dt = 0 # adjust if needed
-                    self.Si    = 0 # adjust if needed
+                    self.Ei_dt = np.minimum(self.Ep_dt, self.Si)
+                    self.Si    = self.Si - self.Ei_dt
 
                 # split flow into Unsaturated Reservoir and Fast flow
                 if self.Pe_dt > 0:
-                    cr       = 0 # adjust if needed
-                    Qiu_dt   = 0 # adjust if needed      
-                    self.Su  = 0 # adjust if needed
-                    Quf_dt   = 0 # adjust if needed            
+                    cr       = (self.Su / self.Su_max)**self.beta
+                    Qiu_dt   = (1-cr)*self.Pe_dt   
+                    self.Su  = self.Su + Qiu_dt
+                    Quf_dt   = cr * self.Pe_dt            
                 else:
                     Quf_dt   = 0   # adjust if needed         
 
                 # Transpiration
-                self.Ep_dt = 0 # adjust if needed 
-                self.Ea_dt = 0 # adjust if needed
-                self.Ea_dt = 0 # adjust if needed
-                self.Su    = 0 # adjust if needed
+                self.Ep_dt = np.maximum(0, self.Ep_dt - self.Ei_dt) # remove interception evaporation
+                self.Ea_dt = self.Su / (self.Su_max * self.Ce) * self.Ep_dt #plant transpiration 
+                self.Ea_dt = np.minimum(self.Ea_dt, self.Su) 
+                self.Su    =  self.Su - self.Ea_dt
 
                 # Percolation
-                self.Qus_dt = 0 # adjust if needed
-                self.Su     = 0 # adjust if needed
+                self.Qus_dt = self.P_max * (self.Su / self.Su_max)
+                self.Su     = self.Su - self.Qus_dt
 
                 # Fast Reservoir
-                self.Sf    = 0 # adjust if needed 
-                self.Qf_dt = 0 # adjust if needed
-                self.Sf    = 0 # adjust if needed
+                self.Sf    = self.Sf + Quf_dt
+                self.Qf_dt = self.Kf * self.Sf 
+                self.Sf    = self.Sf - self.Qf_dt
 
                 # Slow Reservoir
-                self.Ss    = 0 # adjust if needed
-                self.Qs_dt = 0 # adjust if needed
-                self.Ss    = 0 # adjust if needed
+                self.Ss    = self.Ss + self.Qus_dt 
+                self.Qs_dt = self.Ks * self.Ss
+                self.Ss    = self.Ss - self.Qs_dt
 
                 # total = fast + slow
-                self.Q_tot_dt = 0 # adjust if needed
+                self.Q_tot_dt = self.Qs_dt + self.Qf_dt
                 
                 # add time lag to the process - Qm is set here
                 self.add_time_lag()
