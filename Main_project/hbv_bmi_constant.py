@@ -33,15 +33,15 @@ DICT_VAR_UNITS = {"Imax":"mm",
 class HBV_Bmi(Bmi):
     """HBV model wrapped in a BMI interface."""
 
-    def initialize(self, config_file: str | dict[str, Any]) -> None:
-        """Based on a simple HBV BMI implementation without a snow component.
+    def initialize(self, config_file: str) -> None:
+        """"Based on LeakyBucketBMI simple implementation of HBV without snow component
+            Requires atleast:
+            ---------------------
+            'precipitation_file': xarray with "pr" variable & time component
+            'potential_evaporation_file': xarray with "pev" variable of same nature as pr
+            'parameters': list of 8 parameters by a ','
+            'initial_storage' list of 4 storage parameters split by a ','
 
-        Required config keys:
-        - precipitation_file: path to a NetCDF file or an xarray.DataArray with a "pr" variable
-        - potential_evaporation_file: path to a NetCDF file or an xarray.DataArray with an "evspsblpot" variable
-        - optional temperature_file: path to a NetCDF file or an xarray.DataArray with a "tas" variable
-        - optional parameters: comma-separated list of 9 parameters
-        - optional initial_storage: comma-separated list of 4 storage values
         """
         # open json files containing data
         self.config: dict[str, Any] = read_config(config_file)
@@ -52,28 +52,24 @@ class HBV_Bmi(Bmi):
         # add Tas, Tmin and Tmax support for snow component ??!
         self.EP = load_var(self.config["potential_evaporation_file"], "evspsblpot")
 
-        if "temperature_file" in self.config:
-            self.T = load_var(self.config["temperature_file"], "tas")
-        else:
-            self.T = xr.zeros_like(self.P).rename("tas")
-
-        self.T_baseline = float(self.config.get("T_baseline", 0.0))
-
-        self.Ts = self.P["time"].astype("datetime64[s]")
+        # set up times
+        self.Ts = self.P['time'].astype("datetime64[s]")
         self.end_timestep = len(self.Ts.values)
         self.current_timestep = 0
 
+        # time step size in seconds (to be able to do unit conversions) - change here to days
         self.dt = (
             self.Ts.values[1] - self.Ts.values[0]
         ) / np.timedelta64(1, "s") / 24 / 3600
 
-        parameter_string = self.config.get("parameters", "0,1,1,1,0,1,0,0,0")
-        self.set_pars(np.array(parameter_string.split(','), dtype=np.float64))
+        # define parameters 
+        self.set_pars(np.array(self.config['parameters'].split(','), dtype=np.float64))
 
+        # add memory vector for tlag & run weights function
         self.memory_vector_lag = self.set_empty_memory_vector_lag()
 
-        initial_storage_string = self.config.get("initial_storage", "0,0,0,0")
-        s_in = np.array(initial_storage_string.split(','), dtype=np.float64)
+        # define storage & flow terms, flows 0, storages initialised 
+        s_in = np.array(self.config['initial_storage'].split(','),dtype=np.float64)
         self.set_storage(s_in)
 
         # set other flows for initial step 
@@ -97,16 +93,9 @@ class HBV_Bmi(Bmi):
     def update(self) -> None:
             """ Updates model one timestep  """
             if self.current_timestep < self.end_timestep:
-                # Get forcing for current step
-                self.P_dt = self.P.isel(time=self.current_timestep).values * self.dt
-                self.Ep_dt = self.EP.isel(time=self.current_timestep).values * self.dt
-                self.DelT = self.T.isel(time=self.current_timestep).values
+                self.P_dt  = self.P.isel(time=self.current_timestep).to_numpy() * self.dt
+                self.Ep_dt = self.EP.isel(time=self.current_timestep).to_numpy() * self.dt
 
-                # Dynamic Su_max: Gamma is par[8]
-                # Using (1 - Gamma * DelT) means higher T -> lower Su_max
-                self.Su_max = self.Su_max0 + self.Gamma * self.DelT
-                self.Su_max = max(self.Su_max, 1.0) # Guard against zero/negative storage
-                
                 # Interception Reservoir
                 if self.P_dt > 0:
                     # if there is rain, no evap
@@ -165,18 +154,14 @@ class HBV_Bmi(Bmi):
 ############################################################################### 
 
     def set_pars(self, par) -> None:
-        self.I_max = par[0]                # maximum interception
-        self.Ce = par[1]                   # Ea = Su / (sumax * Ce) * Ep
-        self.Su_max0 = par[2]              # ''
-        self.beta = par[3]                 # Cr = (su/sumax)**beta
-        self.P_max = par[4]                # Qus = Pmax * (Su/Sumax)
-        self.T_lag = self.set_tlag(par[5]) # used in triangular transfer function
-        self.Kf = par[6]                   # Qf=kf*sf
-        self.Ks = par[7]                   # Qs=Ks*
-        self.Gamma = par[8]
-
-        if hasattr(self, "memory_vector_lag"):
-            self.memory_vector_lag = self.set_empty_memory_vector_lag()
+        self.I_max  = par[0]                # maximum interception
+        self.Ce     = par[1]                # Ea = Su / (sumax * Ce) * Ep
+        self.Su_max = par[2]                # ''
+        self.beta   = par[3]                # Cr = (su/sumax)**beta
+        self.P_max  = par[4]                # Qus = Pmax * (Su/Sumax)
+        self.T_lag  = self.set_tlag(par[5]) # used in triangular transfer function
+        self.Kf     = par[6]                # Qf=kf*sf
+        self.Ks     = par[7]                # Qs=Ks*
 
     def set_storage(self, stor) -> None:
         self.Si = stor[0] # Interception storage
@@ -213,7 +198,7 @@ class HBV_Bmi(Bmi):
             
     def updating_obj_from_dict_var(self) -> None:
         """Function which inverts the dictionary above & sets objects correctly"""
-        param_names = ["Imax","Ce", "Sumax0", "Beta", "Pmax", "Tlag", "Kf", "Ks", "Gamma"]
+        param_names = ["Imax","Ce", "Sumax", "Beta", "Pmax", "Tlag", "Kf", "Ks"]
         stor_names = ["Si", "Su", "Sf", "Ss"]
         self.set_pars([self.dict_var_obj[par] for par in param_names])
         self.set_storage([self.dict_var_obj[stor] for stor in stor_names])
@@ -479,26 +464,43 @@ def get_unixtime(Ts: np.datetime64) -> int:
 
 
 
-def read_config(config_file: str | dict[str, Any]) -> dict:
-    if isinstance(config_file, dict):
-        return config_file
+def read_config(config_file: str) -> dict:
     with open(config_file) as cfg:
         config = json.load(cfg)
     return config
 
 
-def load_var(ncfile: str | Path | xr.DataArray, varname: str) -> xr.DataArray:
-    """Load a forcing variable from a NetCDF file or use an in-memory DataArray."""
-    if isinstance(ncfile, xr.DataArray):
-        if ncfile.name != varname:
-            ncfile = ncfile.rename(varname)
-        return ncfile
+def load_var(ncfile: str | Path, varname: str) -> xr.DataArray:
+    """Load the precipitation data file generated by GenericLumpedForcing.
 
+
+    .. code-block:: python
+
+        from ewatercycle.base.forcing import GenericLumpedForcing
+
+        shape = Path("./src/ewatercycle/testing/data/Rhine/Rhine.shp")
+        cmip_dataset = {
+            "dataset": "EC-Earth3",
+            "project": "CMIP6",
+            "grid": "gr",
+            "exp": ["historical",],
+            "ensemble": "r6i1p1f1",
+        }
+
+        forcing = GenericLumpedForcing.generate(
+            dataset=cmip_dataset,
+            start_time="2000-01-01T00:00:00Z",
+            end_time="2001-01-01T00:00:00Z",
+            shape=shape.absolute(),
+        )
+
+        data = load_precip(forcing.directory / forcing.pr)
+    """
     data = xr.open_dataset(ncfile)
     assert "time" in data.dims
     assert varname in data.data_vars
     if "units" in data[varname].attrs:
         if data[varname].attrs['units'] == 'kg m-2 s-1':
-            data[varname] = data[varname] * 24 * 3600  # mm/day
-            # data[varname].attrs['units'] = 'mm d-1' TODO, fix.
+            data[varname] = data[varname] * 24 * 3600 #mm/day
+            #data[varname].attrs['units'] = 'mm d-1' TODO, fix.
     return data[varname]
