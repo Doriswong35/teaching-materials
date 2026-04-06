@@ -23,7 +23,7 @@ to do:
     2016-2025 as validation 
 --> result: a set of optimized parameters
 
-Doris to ask markus about soil parameter thing tmr 
+Doris to ask markus about soil parameter thing tmr, and wuther Q90 and Q10 are good indicators of flood and drought risks 
 
 Project for future scenarios: Tessa: 
 per month-goes to 2080/2100 (3 scenarios) [H]
